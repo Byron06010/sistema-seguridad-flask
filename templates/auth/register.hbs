@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Sistema de Seguridad - Registro de Usuario</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body style="display: flex; justify-content: center; align-items: center; min-height: 100vh;">
+    <div class="card" style="width: 100%; max-width: 420px;">
+        <h2 style="text-align: center; color: #60a5fa;">Registro de Guardia / Personal</h2>
+        <form id="register-form">
+            <label>RUT:</label>
+            <input type="text" id="rut" class="form-control" required placeholder="12345678-9">
+
+            <label>Nombre Completo:</label>
+            <input type="text" id="nombre" class="form-control" required placeholder="Juan Pérez">
+
+            <label>Correo Electrónico:</label>
+            <input type="email" id="email" class="form-control" required placeholder="guardia@empresa.cl">
+
+            <label>Contraseña:</label>
+            <input type="password" id="password" class="form-control" required placeholder="******">
+
+            <label>Rol:</label>
+            <select id="rol" class="form-control">
+                <option value="GUARDIA">Guardia</option>
+                <option value="SUPERVISOR">Supervisor</option>
+                <option value="ADMINISTRADOR">Administrador</option>
+            </select>
+
+            <button type="submit" class="btn btn-success">Crear Cuenta</button>
+            <p style="text-align: center; margin-top: 15px;">
+                <a href="/" style="color: #60a5fa; text-decoration: none;">¿Ya tienes cuenta? Inicia Sesión</a>
+            </p>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const res = await fetch('/api/auth/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    rut: document.getElementById('rut').value,
+                    nombre: document.getElementById('nombre').value,
+                    email: document.getElementById('email').value,
+                    password: document.getElementById('password').value,
+                    rol: document.getElementById('rol').value
+                })
+            });
+            const data = await res.json();
+            if(data.ok) {
+                alert("Usuario creado exitosamente. Ahora puedes iniciar sesión.");
+                window.location.href = '/';
+            } else {
+                alert("Error: " + data.mensaje);
+            }
+        });
+    </script>
+</body>
+</html>

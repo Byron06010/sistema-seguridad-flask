@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control de Turno y Rondas - Sistema de Seguridad</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    
+    <!-- ESTILOS ESPECÍFICOS PARA EL CALENDARIO VISUAL -->
+    <style>
+        .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; text-align: center; }
+        .cal-header-day { font-weight: 600; font-size: 0.85rem; color: var(--text-muted, #94a3b8); padding: 0.5rem 0; }
+        .cal-cell { 
+            background: rgba(255, 255, 255, 0.03); 
+            border: 1px solid rgba(255, 255, 255, 0.08); 
+            border-radius: 8px; 
+            min-height: 85px; 
+            padding: 6px; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: space-between; 
+            cursor: pointer; 
+            transition: all 0.2s ease;
+        }
+        .cal-cell:hover { background: rgba(147, 51, 234, 0.1); border-color: rgba(147, 51, 234, 0.4); }
+        .cal-cell.other-month { opacity: 0.3; background: transparent; }
+        .cal-cell.today { border-color: #a855f7; background: rgba(147, 51, 234, 0.05); }
+        .cal-day-num { font-size: 0.85rem; font-weight: 600; color: #fff; text-align: left; }
+        .cal-event-tag { font-size: 0.7rem; background: #3b82f6; color: #fff; padding: 2px 4px; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+        .tag-mañana { background: #0284c7 !important; }
+        .tag-tarde { background: #d97706 !important; }
+        .tag-noche { background: #4f46e5 !important; }
+        .tag-libre { background: #059669 !important; }
+        .tag-largo { background: #9333ea !important; }
+    </style>
+</head>
+
+<body>
+
+    <div class="dashboard-container">
+
+        <!-- HEADER SUPERIOR -->
+        <div class="header-card">
+            <div class="user-info">
+                <h1>Bienvenido, {{ usuario.nombre if usuario and usuario.nombre else 'Guardia de Seguridad' }}</h1>
+                <p>Puesto / Instalación | Control Operativo de Turnos y Rondas</p>
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <!-- BOTÓN ACCESO RÁPIDO CALENDARIO -->
+                <button type="button" class="btn btn-info" onclick="abrirModalCalendario()" style="display: flex; align-items: center; gap: 0.4rem;">
+                    📅 Ver Calendario de Turnos
+                </button>
+                
+                {% set estado = usuario.estado_turno if usuario and usuario.estado_turno else 'FUERA_DE_TURNO' %}
+                <span class="status-badge status-{{ estado }}">
+                    {% if estado == 'EN_TURNO' %}● En Turno
+                    {% elif estado == 'EN_COLACION' %}☕ En Colación
+                    {% else %}○ Fuera de Turno{% endif %}
+                </span>
+            </div>
+        </div>
+
+        <!-- CONTENIDO PRINCIPAL -->
+        <div class="main-grid">
+
+            <!-- PANEL IZQUIERDO: CONTROLES Y RONDAS -->
+            <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+
+                <!-- MARCADOR DE TURNO GENERAL -->
+                <div class="card">
+                    <div class="card-title">⏱️ Reloj de Turno General</div>
+
+                    <div class="timer-box">
+                        <div class="timer-label">Tiempo Transcurrido en Turno</div>
+                        <div class="timer-display" id="cronometro-turno">00:00:00</div>
+                    </div>
+
+                    <div class="actions-grid">
+                        <button class="btn btn-success" onclick="registrarMarca('INICIO_TURNO')">Entrada</button>
+                        <button class="btn btn-warning" onclick="registrarMarca('SALIDA_COLACION')">Salida Colación</button>
+                        <button class="btn btn-info" onclick="registrarMarca('RETORNO_COLACION')">Retorno Colación</button>
+                        <button class="btn btn-danger" onclick="registrarMarca('FIN_TURNO')">Término Turno</button>
+                    </div>
+                </div>
+
+                <!-- CONTROL DE RONDAS DE INSPECCIÓN -->
+                <div class="card">
+                    <div class="card-title card-title-purple">🚶‍♂️ Control de Rondín / Inspección</div>
+
+                    <div class="form-group">
+                        <label for="sector-ronda">Sector / Zona a Registrar</label>
+                        <input type="text" id="sector-ronda" class="form-control" placeholder="Ej: Perímetro Exterior / Bodegas">
+                    </div>
+
+                    <div class="timer-box" style="background: rgba(147, 51, 234, 0.1); border: 1px solid rgba(147, 51, 234, 0.3); margin-bottom: 1rem;">
+                        <div class="timer-label" style="color: #a855f7;">Tiempo Transcurrido en Ronda</div>
+                        <div class="timer-display" id="cronometro-ronda" style="color: #c084fc;">00:00:00</div>
+                    </div>
+
+                    <div class="actions-grid" style="grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <button type="button" class="btn btn-info" id="btn-inicio-ronda" onclick="iniciarRonda()">▶️ Iniciar Ronda</button>
+                        <button type="button" class="btn btn-danger" id="btn-fin-ronda" onclick="finalizarRonda()" disabled>🏁 Finalizar Ronda</button>
+                    </div>
+
+                    <div id="info-ronda-activa" style="display: none; margin-top: 1rem; padding: 0.8rem; background: var(--bg-surface); border-radius: 8px; border-left: 4px solid #a855f7;">
+                        <p style="margin: 0 0 0.3rem 0; font-size: 0.9rem;">📍 <strong>Sector activo:</strong> <span id="txt-sector-ronda">-</span></p>
+                        <p style="margin: 0; font-size: 0.9rem;">🚀 <strong>Hora inicio:</strong> <span id="txt-inicio-ronda">-</span></p>
+                    </div>
+                </div>
+
+                <!-- REGISTRO DE INCIDENTE / NOVEDAD -->
+                <div class="card">
+                    <div class="card-title">📝 Registrar Novedad / Incidente</div>
+                    <form id="form-incidente" onsubmit="guardarNovedad(event)">
+                        <div class="form-group">
+                            <label for="inc-titulo">Título o Asunto</label>
+                            <input type="text" id="inc-titulo" class="form-control" placeholder="Ej: Candado roto en portón 2" required>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="inc-categoria">Categoría</label>
+                                <select id="inc-categoria" class="form-control" required>
+                                    <option value="Ronda">Ronda</option>
+                                    <option value="Acceso">Control Acceso</option>
+                                    <option value="Incidente">Incidente / Alarma</option>
+                                    <option value="Observacion">Observación</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="inc-prioridad">Prioridad</label>
+                                <select id="inc-prioridad" class="form-control" required>
+                                    <option value="Baja">Baja</option>
+                                    <option value="Media">Media</option>
+                                    <option value="Alta">Alta</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="inc-ubicacion">Ubicación</label>
+                            <input type="text" id="inc-ubicacion" class="form-control" placeholder="Ej: Sector Bodegas" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="inc-descripcion">Detalle de la Novedad</label>
+                            <textarea id="inc-descripcion" class="form-control" placeholder="Escriba los detalles observados..." required></textarea>
+                        </div>
+
+                        <button type="submit" class="btn btn-info" style="width: 100%;">Guardar Novedad</button>
+                    </form>
+                </div>
+
+            </div>
+
+            <!-- PANEL DERECHO: BITÁCORAS DE HISTORIAL -->
+            <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+
+                <!-- BITÁCORA DE RONDAS -->
+                <div class="card">
+                    <div class="card-title card-title-purple">🚶‍♂️ Bitácora de Rondas Realizadas</div>
+
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>👤 Guardia / Inspector</th>
+                                    <th>📍 Sector / Zona</th>
+                                    <th>🚀 Inicio Ronda</th>
+                                    <th>🏁 Término Ronda</th>
+                                    <th>⏱️ Duración</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in rondas %}
+                                <tr>
+                                    <td><strong>{{ r.usuario_nombre }}</strong></td>
+                                    <td>{{ r.sector }}</td>
+                                    <td><span class="fecha-badge">📅 {{ r.inicio_fecha }} ⏰ {{ r.inicio_hora }}</span></td>
+                                    <td><span class="fecha-badge">📅 {{ r.fin_fecha }} ⏰ {{ r.fin_hora }}</span></td>
+                                    <td><strong>{{ r.duracion }}</strong></td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                                        No hay rondas registradas en la base de datos.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- BITÁCORA GENERAL DE NOVEDADES -->
+                <div class="card">
+                    <div class="card-title">📋 Bitácora General de Novedades</div>
+
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>📅 Fecha y Hora</th>
+                                    <th>📌 Título</th>
+                                    <th>🏷️ Categoría</th>
+                                    <th>🚨 Prioridad</th>
+                                    <th>📍 Ubicación</th>
+                                    <th>📝 Descripción</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for inc in incidentes %}
+                                <tr>
+                                    <td style="white-space: nowrap;">
+                                        <span class="fecha-badge">{{ inc.fecha_formateada }}</span>
+                                    </td>
+                                    <td><strong>{{ inc.titulo }}</strong></td>
+                                    <td>{{ inc.categoria }}</td>
+                                    <td><span class="priority-tag priority-{{ inc.prioridad }}">{{ inc.prioridad }}</span></td>
+                                    <td>{{ inc.ubicacion }}</td>
+                                    <td>{{ inc.descripcion }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 1.5rem;">
+                                        No hay novedades registradas.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL PRINCIPAL: CALENDARIO VISUAL MENSUAL -->
+    <!-- ========================================== -->
+    <div id="modal-calendario" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; padding: 1rem;">
+        <div style="background: #1e293b; width: 100%; max-width: 900px; border-radius: 16px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; overflow: hidden; max-height: 90vh;">
+            
+            <!-- Header del Modal Calendario -->
+            <div style="padding: 1.2rem 1.5rem; background: #0f172a; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155;">
+                <div style="display: flex; align-items: center; gap: 1rem;">
+                    <h2 id="cal-mes-anio-titulo" style="margin: 0; color: #fff; font-size: 1.25rem; font-weight: 600;">Calendario de Turnos</h2>
+                    <div style="display: flex; gap: 0.3rem;">
+                        <button type="button" class="btn btn-info" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="cambiarMes(-1)">◀ Mes Ant.</button>
+                        <button type="button" class="btn btn-info" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="mesActual()">Hoy</button>
+                        <button type="button" class="btn btn-info" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="cambiarMes(1)">Mes Sig. ▶</button>
+                    </div>
+                </div>
+                <button type="button" onclick="cerrarModalCalendario()" style="background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer;">✕</button>
+            </div>
+
+            <!-- Cuerpo del Calendario (Lunes a Domingo + Celdas) -->
+            <div style="padding: 1.5rem; overflow-y: auto; flex: 1;">
+                <div class="cal-grid" style="margin-bottom: 0.5rem;">
+                    <div class="cal-header-day">Lunes</div>
+                    <div class="cal-header-day">Martes</div>
+                    <div class="cal-header-day">Miércoles</div>
+                    <div class="cal-header-day">Jueves</div>
+                    <div class="cal-header-day">Viernes</div>
+                    <div class="cal-header-day">Sábado</div>
+                    <div class="cal-header-day">Domingo</div>
+                </div>
+                <div id="cal-dias-grid" class="cal-grid"></div>
+            </div>
+
+            <div style="padding: 1rem 1.5rem; background: #0f172a; border-top: 1px solid #334155; font-size: 0.85rem; color: var(--text-muted); text-align: center;">
+                💡 <em>Haz clic en cualquier día del calendario para programar, editar o eliminar tu turno.</em>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- SUB-MODAL: FORMULARIO DE EDICIÓN / ELIMINACIÓN -->
+    <!-- ========================================== -->
+    <div id="modal-editar-dia" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1100; justify-content: center; align-items: center;">
+        <div style="background: #1e293b; padding: 2rem; border-radius: 12px; width: 100%; max-width: 400px; border: 1px solid rgba(255,255,255,0.1);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.2rem;">
+                <h3 id="txt-modal-dia-titulo" style="margin: 0; color: #fff; font-size: 1.1rem;">Gestionar Turno</h3>
+                <button type="button" onclick="cerrarSubModalDia()" style="background: none; border: none; color: #fff; font-size: 1.2rem; cursor: pointer;">✕</button>
+            </div>
+
+            <form id="form-editar-dia" onsubmit="guardarTurnoDesdeCalendario(event)">
+                <input type="hidden" id="edit-cal-fecha">
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #cbd5e1;">Tipo de Turno</label>
+                    <select id="edit-cal-tipo" class="form-control" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: #0f172a; color: #fff; border: 1px solid #334155;">
+                        <option value="MAÑANA (08:00 - 16:00)">Turno Mañana</option>
+                        <option value="TARDE (16:00 - 00:00)">Turno Tarde</option>
+                        <option value="NOCHE (00:00 - 08:00)">Turno Noche</option>
+                        <option value="LARGO (12 Horas)">Turno Largo (12 hrs)</option>
+                        <option value="LIBRE / FRANCO">Libre / Franco</option>
+                        <option value="COLACION / PERMISO">Permiso / Colación</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label style="display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #cbd5e1;">Puesto o Instalación</label>
+                    <input type="text" id="edit-cal-puesto" class="form-control" placeholder="Ej: Acceso Principal" required style="width: 100%; padding: 0.6rem; border-radius: 6px; background: #0f172a; color: #fff; border: 1px solid #334155;">
+                </div>
+
+                <div class="form-group" style="margin-bottom: 1.5rem;">
+                    <label style="display: block; margin-bottom: 0.4rem; font-size: 0.85rem; color: #cbd5e1;">Observaciones</label>
+                    <textarea id="edit-cal-obs" class="form-control" placeholder="Notas adicionales..." style="width: 100%; padding: 0.6rem; border-radius: 6px; background: #0f172a; color: #fff; border: 1px solid #334155; height: 70px;"></textarea>
+                </div>
+
+                <div style="display: flex; gap: 0.8rem;">
+                    <button type="button" class="btn btn-danger" style="flex: 1;" id="btn-eliminar-turno" onclick="eliminarTurnoCalendario()">🗑️ Eliminar</button>
+                    <button type="submit" class="btn btn-success" style="flex: 1;">Guardar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- JAVASCRIPT PRINCIPAL Y DEL CALENDARIO      -->
+    <!-- ========================================== -->
+    <script>
+        const inicioTurnoIso = "{{ inicio_turno_iso }}";
+        const estadoActual = "{{ usuario.estado_turno if usuario and usuario.estado_turno else 'FUERA_DE_TURNO' }}";
+
+        // DICCIONARIO LOCAL DE TURNOS (Sincronizado vía JS para no recargar la página)
+        let turnosData = {{ turnos_calendario_json | safe }};
+
+        let fechaCalActual = new Date();
+
+        {% if ronda_activa %}
+            const rondaActivaIso = "{{ ronda_activa.inicio_iso }}";
+            const rondaActivaSector = "{{ ronda_activa.sector }}";
+            const rondaActivaInicioHora = "{{ ronda_activa.inicio_fecha }} {{ ronda_activa.inicio_hora }}";
+        {% else %}
+            const rondaActivaIso = "";
+            const rondaActivaSector = "";
+            const rondaActivaInicioHora = "";
+        {% endif %}
+
+        let timerTurnoInterval = null;
+        let timerRondaInterval = null;
+
+        // --- 1. CRONÓMETRO DE TURNO GENERAL ---
+        function actualizarCronometroTurno() {
+            if (!inicioTurnoIso) return;
+            const diffMs = new Date() - new Date(inicioTurnoIso);
+            if (diffMs < 0) return;
+
+            const hrs = String(Math.floor(diffMs / 3600000)).padStart(2, '0');
+            const mins = String(Math.floor((diffMs % 3600000) / 60000)).padStart(2, '0');
+            const secs = String(Math.floor((diffMs % 60000) / 1000)).padStart(2, '0');
+
+            const displayTurno = document.getElementById('cronometro-turno');
+            if (displayTurno) displayTurno.innerText = `${hrs}:${mins}:${secs}`;
+        }
+
+        if (inicioTurnoIso && estadoActual === "EN_TURNO") {
+            timerTurnoInterval = setInterval(actualizarCronometroTurno, 1000);
+            actualizarCronometroTurno();
+        }
+
+        // --- 2. CONTROL DE RONDA ---
+        function actualizarCronometroRonda(isoString) {
+            if (!isoString) return;
+            const diffMs = new Date() - new Date(isoString);
+            if (diffMs < 0) return;
+
+            const hrs = String(Math.floor(diffMs / 3600000)).padStart(2, '0');
+            const mins = String(Math.floor((diffMs % 3600000) / 60000)).padStart(2, '0');
+            const secs = String(Math.floor((diffMs % 60000) / 1000)).padStart(2, '0');
+
+            const displayRonda = document.getElementById('cronometro-ronda');
+            if (displayRonda) displayRonda.innerText = `${hrs}:${mins}:${secs}`;
+        }
+
+        if (rondaActivaIso) {
+            const infoRonda = document.getElementById('info-ronda-activa');
+            if (infoRonda) infoRonda.style.display = 'block';
+            
+            const txtSector = document.getElementById('txt-sector-ronda');
+            if (txtSector) txtSector.innerText = rondaActivaSector;
+            
+            const txtInicio = document.getElementById('txt-inicio-ronda');
+            if (txtInicio) txtInicio.innerText = rondaActivaInicioHora;
+
+            const btnInicio = document.getElementById('btn-inicio-ronda');
+            const btnFin = document.getElementById('btn-fin-ronda');
+            if (btnInicio) btnInicio.disabled = true;
+            if (btnFin) btnFin.disabled = false;
+
+            timerRondaInterval = setInterval(() => actualizarCronometroRonda(rondaActivaIso), 1000);
+            actualizarCronometroRonda(rondaActivaIso);
+        }
+
+        async function iniciarRonda() {
+            const inputSector = document.getElementById('sector-ronda');
+            const sector = inputSector ? inputSector.value.trim() : '';
+            const sectorFinal = sector !== '' ? sector : 'Ronda General / Sin Sector';
+
+            const ahora = new Date();
+            const payload = {
+                sector: sectorFinal,
+                inicio_iso: ahora.toISOString(),
+                inicio_fecha: ahora.toLocaleDateString('es-CL'),
+                inicio_hora: ahora.toLocaleTimeString('es-CL')
+            };
+
+            try {
+                const res = await fetch('/api/rondas/iniciar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (res.ok && data.ok) location.reload();
+                else alert("⚠️ " + (data.mensaje || "Error al iniciar la ronda"));
+            } catch (err) {
+                alert("❌ Error de conexión al iniciar la ronda.");
+            }
+        }
+
+        async function finalizarRonda() {
+            const btnFin = document.getElementById('btn-fin-ronda');
+            if (btnFin) btnFin.disabled = true;
+
+            const finRondaTiempo = new Date();
+            const displayRonda = document.getElementById('cronometro-ronda');
+            const duracionTexto = displayRonda ? displayRonda.innerText : "00:00:00";
+
+            const payload = {
+                fin_fecha: finRondaTiempo.toLocaleDateString('es-CL'),
+                fin_hora: finRondaTiempo.toLocaleTimeString('es-CL'),
+                duracion: duracionTexto
+            };
+
+            try {
+                const res = await fetch('/api/rondas/finalizar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (res.ok && data.ok) {
+                    alert("✅ Ronda finalizada correctamente.");
+                    location.reload();
+                } else {
+                    if (btnFin) btnFin.disabled = false;
+                    alert("⚠️ " + (data.mensaje || "Error al finalizar"));
+                }
+            } catch (err) {
+                if (btnFin) btnFin.disabled = false;
+                alert("❌ Error de conexión al finalizar.");
+            }
+        }
+
+        // --- 3. MOTOR DEL CALENDARIO VISUAL MENSUAL ---
+        function abrirModalCalendario() {
+            document.getElementById('modal-calendario').style.display = 'flex';
+            renderizarCalendarioMes();
+        }
+
+        function cerrarModalCalendario() {
+            document.getElementById('modal-calendario').style.display = 'none';
+        }
+
+        function cambiarMes(delta) {
+            fechaCalActual.setMonth(fechaCalActual.getMonth() + delta);
+            renderizarCalendarioMes();
+        }
+
+        function mesActual() {
+            fechaCalActual = new Date();
+            renderizarCalendarioMes();
+        }
+
+        function renderizarCalendarioMes() {
+            const grid = document.getElementById('cal-dias-grid');
+            grid.innerHTML = '';
+
+            const anio = fechaCalActual.getFullYear();
+            const mes = fechaCalActual.getMonth();
+
+            const nombresMeses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+            document.getElementById('cal-mes-anio-titulo').innerText = `${nombresMeses[mes]} ${anio}`;
+
+            const primerDiaMes = new Date(anio, mes, 1);
+            let inicioDiaSemana = primerDiaMes.getDay() - 1;
+            if (inicioDiaSemana === -1) inicioDiaSemana = 6;
+
+            const ultimoDiaMes = new Date(anio, mes + 1, 0).getDate();
+            const ultimoDiaMesAnt = new Date(anio, mes, 0).getDate();
+            const hoyStr = new Date().toISOString().split('T')[0];
+
+            for (let i = inicioDiaSemana; i > 0; i--) {
+                const diaNum = ultimoDiaMesAnt - i + 1;
+                const celda = document.createElement('div');
+                celda.className = 'cal-cell other-month';
+                celda.innerHTML = `<div class="cal-day-num">${diaNum}</div>`;
+                grid.appendChild(celda);
+            }
+
+            for (let dia = 1; dia <= ultimoDiaMes; dia++) {
+                const mesFmt = String(mes + 1).padStart(2, '0');
+                const diaFmt = String(dia).padStart(2, '0');
+                const fechaIso = `${anio}-${mesFmt}-${diaFmt}`;
+
+                const celda = document.createElement('div');
+                celda.className = 'cal-cell';
+                if (fechaIso === hoyStr) celda.classList.add('today');
+
+                let htmlTag = '';
+                if (turnosData[fechaIso]) {
+                    const t = turnosData[fechaIso];
+                    let claseTag = 'tag-mañana';
+                    const tipo = t.tipo_turno.toUpperCase();
+                    if (tipo.includes('TARDE')) claseTag = 'tag-tarde';
+                    else if (tipo.includes('NOCHE')) claseTag = 'tag-noche';
+                    else if (tipo.includes('LIBRE')) claseTag = 'tag-libre';
+                    else if (tipo.includes('LARGO')) claseTag = 'tag-largo';
+
+                    htmlTag = `<div class="cal-event-tag ${claseTag}" title="${t.tipo_turno} - ${t.puesto}">${t.tipo_turno.split(' ')[0]}</div>`;
+                }
+
+                celda.innerHTML = `
+                    <div class="cal-day-num">${dia}</div>
+                    <div style="flex:1; display:flex; flex-direction:column; justify-content:center; gap:2px;">
+                        ${htmlTag}
+                    </div>
+                `;
+
+                celda.onclick = () => abrirSubModalDia(fechaIso);
+                grid.appendChild(celda);
+            }
+
+            const totalCeldasRellenadas = inicioDiaSemana + ultimoDiaMes;
+            const celdasRestantes = (totalCeldasRellenadas % 7 === 0) ? 0 : 7 - (totalCeldasRellenadas % 7);
+            for (let i = 1; i <= celdasRestantes; i++) {
+                const celda = document.createElement('div');
+                celda.className = 'cal-cell other-month';
+                celda.innerHTML = `<div class="cal-day-num">${i}</div>`;
+                grid.appendChild(celda);
+            }
+        }
+
+        // --- 4. SUB-MODAL DE EDICIÓN / ELIMINACIÓN DE DÍA ---
+        function abrirSubModalDia(fechaIso) {
+            document.getElementById('edit-cal-fecha').value = fechaIso;
+            document.getElementById('txt-modal-dia-titulo').innerText = `Turno para el día: ${fechaIso}`;
+
+            const btnEliminar = document.getElementById('btn-eliminar-turno');
+
+            if (turnosData[fechaIso]) {
+                document.getElementById('edit-cal-tipo').value = turnosData[fechaIso].tipo_turno;
+                document.getElementById('edit-cal-puesto').value = turnosData[fechaIso].puesto || '';
+                document.getElementById('edit-cal-obs').value = turnosData[fechaIso].observaciones || '';
+                if (btnEliminar) btnEliminar.style.display = 'block'; // Mostrar botón eliminar si ya tiene turno
+            } else {
+                document.getElementById('edit-cal-tipo').value = 'MAÑANA (08:00 - 16:00)';
+                document.getElementById('edit-cal-puesto').value = 'Puesto Principal';
+                document.getElementById('edit-cal-obs').value = '';
+                if (btnEliminar) btnEliminar.style.display = 'none'; // Ocultar si está vacío
+            }
+
+            document.getElementById('modal-editar-dia').style.display = 'flex';
+        }
+
+        function cerrarSubModalDia() {
+            document.getElementById('modal-editar-dia').style.display = 'none';
+        }
+
+        // GUARDAR / CREAR TURNO (Sin recargar la página entera)
+        async function guardarTurnoDesdeCalendario(event) {
+            event.preventDefault();
+            const fechaIso = document.getElementById('edit-cal-fecha').value;
+            const payload = {
+                fecha: fechaIso,
+                tipo_turno: document.getElementById('edit-cal-tipo').value,
+                puesto: document.getElementById('edit-cal-puesto').value.trim(),
+                observaciones: document.getElementById('edit-cal-obs').value.trim()
+            };
+
+            try {
+                const res = await fetch('/api/calendario/guardar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+
+                if (res.ok && data.ok) {
+                    // Actualizamos el diccionario local en memoria
+                    turnosData[fechaIso] = payload;
+                    
+                    // Cerramos SOLO el sub-modal de edición
+                    cerrarSubModalDia();
+                    
+                    // Redibujamos el calendario al instante para ver el cambio reflejado
+                    renderizarCalendarioMes();
+                } else {
+                    alert("⚠️ " + (data.mensaje || "Error al guardar"));
+                }
+            } catch (err) {
+                alert("❌ Error de conexión al guardar el turno.");
+            }
+        }
+
+        // ELIMINAR TURNO (Nuevo endpoint / acción sin cerrar el calendario)
+        async function eliminarTurnoCalendario() {
+            const fechaIso = document.getElementById('edit-cal-fecha').value;
+            if (!confirm(`¿Estás seguro de eliminar el turno del día ${fechaIso}?`)) return;
+
+            try {
+                const res = await fetch('/api/calendario/eliminar', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fecha: fechaIso })
+                });
+                const data = await res.json();
+
+                if (res.ok && data.ok) {
+                    // Borramos del diccionario local
+                    delete turnosData[fechaIso];
+
+                    // Cerramos SOLO el sub-modal
+                    cerrarSubModalDia();
+
+                    // Refrescamos la cuadrícula al instante
+                    renderizarCalendarioMes();
+                } else {
+                    alert("⚠️ " + (data.mensaje || "Error al eliminar el turno"));
+                }
+            } catch (err) {
+                alert("❌ Error de conexión al eliminar.");
+            }
+        }
+
+        // --- 5. REGISTRO DE MARCAS DE TURNO GENERAL ---
+        async function registrarMarca(tipoMarca) {
+            try {
+                const res = await fetch('/api/turno/marca', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tipo_marca: tipoMarca, observaciones: "" })
+                });
+                const data = await res.json();
+                if (res.ok && data.ok) {
+                    alert("Marca registrada correctamente.");
+                    location.reload();
+                } else {
+                    alert("⚠️ Error al registrar marca.");
+                }
+            } catch (err) {
+                alert("❌ Error de conexión.");
+            }
+        }
+
+        // --- 6. REGISTRO DE INCIDENTES ---
+        async function guardarNovedad(event) {
+            event.preventDefault();
+            const payload = {
+                titulo: document.getElementById('inc-titulo').value.trim(),
+                categoria: document.getElementById('inc-categoria').value,
+                prioridad: document.getElementById('inc-prioridad').value,
+                ubicacion: document.getElementById('inc-ubicacion').value.trim(),
+                descripcion: document.getElementById('inc-descripcion').value.trim()
+            };
+
+            try {
+                const res = await fetch('/api/incidentes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (res.ok && data.ok) {
+                    alert("✅ Novedad registrada con éxito.");
+                    location.reload();
+                } else {
+                    alert("⚠️ Error al registrar la novedad.");
+                }
+            } catch (err) {
+                alert("❌ Error de conexión.");
+            }
+        }
+    </script>
+
+</body>
+
+</html>
